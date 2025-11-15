@@ -1,0 +1,65 @@
+# ============================
+#  Python cache / temp files
+# ============================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.tmp
+*.log
+
+# ============================
+#  Virtual environments
+# ============================
+.venv/
+env/
+venv/
+
+# ============================
+#  OS-specific
+# ============================
+.DS_Store
+Thumbs.db
+
+# ============================
+#  SQLite database
+# ============================
+mygram.db
+*.sqlite
+*.sqlite3
+
+# ============================
+#  Cookies / Session files
+# ============================
+cookies/
+cookies/*.json
+
+# ============================
+#  ChromeDriver & WebDriverManager
+# ============================
+*.zip
+chromedriver
+chromedriver.exe
+drivers/
+~webdriver-manager/
+
+# ============================
+#  IDE configs
+# ============================
+.idea/
+.vscode/
+*.iml
+
+# ============================
+#  Logs / Dumps
+# ============================
+logs/
+*.log
+*.pid
+
+# ============================
+#  Backups
+# ============================
+*.bak
+*.old
