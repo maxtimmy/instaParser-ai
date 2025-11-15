@@ -73,17 +73,16 @@ mygram/
 │   ├── connection.py                 # Работа с SQLite
 │   ├── contact_repository.py         # Репозиторий контактов
 │   └── message_repository.py         # Репозиторий сообщений
-│
-├── cookies/
-│   └── instagram_cookies.json        # (создаётся автоматически)
-│
-├── init_db.py                        # Инициализация таблиц
-├── mygram.db                         # База SQLite
-├── README.md
 ├── services/
 │   ├── login_manager.py        # Авто-логин, загрузка/сохранение cookies
 │   ├── scroll_engine.py        # Универсальный скроллер (чаты / контакты)
 │   └── bubble_parser.py        # Модуль разбора сообщений и типов bubble
+├── instagram_cookies.json        # (создаётся автоматически)
+│
+├── init_db.py                        # Инициализация таблиц
+├── mygram.db                         # База SQLite
+├── README.md
+
 ```
 
 ---
