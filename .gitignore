@@ -32,8 +32,13 @@ mygram.db
 # ============================
 #  Cookies / Session files
 # ============================
+# local Instagram cookies
+cookies.json
+*.cookies.json
+*.cookie
+*.cookies
 cookies/
-cookies/*.json
+session.json
 
 # ============================
 #  ChromeDriver & WebDriverManager

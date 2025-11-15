@@ -79,7 +79,11 @@ mygram/
 │
 ├── init_db.py                        # Инициализация таблиц
 ├── mygram.db                         # База SQLite
-└── README.md
+├── README.md
+├── services/
+│   ├── login_manager.py        # Авто-логин, загрузка/сохранение cookies
+│   ├── scroll_engine.py        # Универсальный скроллер (чаты / контакты)
+│   └── bubble_parser.py        # Модуль разбора сообщений и типов bubble
 ```
 
 ---
