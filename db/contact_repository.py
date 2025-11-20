@@ -28,6 +28,51 @@ class ContactRepository:
     def _connect(self):
         return get_connection()
 
+    def ensure_exists(self, username: str) -> None:
+        """
+        Проверяет, что контакт с данным username существует в таблице contacts.
+        Если записи нет — создаёт базовую строку с минимально необходимыми полями.
+        """
+        if not username:
+            return
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM contacts WHERE username = ?",
+                (username,),
+            ).fetchone()
+
+            if row is not None:
+                return
+
+            # Вставляем новую запись с дефолтными значениями
+            now_iso = datetime.utcnow().isoformat()
+
+            conn.execute(
+                """
+                INSERT INTO contacts (
+                    username,
+                    display_name,
+                    profile_url,
+                    is_active,
+                    last_message_preview,
+                    last_message_at_utc,
+                    scraped_at_utc
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    username,
+                    None,      # display_name
+                    None,      # profile_url
+                    1,         # is_active
+                    None,      # last_message_preview
+                    None,      # last_message_at_utc
+                    now_iso,   # scraped_at_utc
+                ),
+            )
+            conn.commit()
+
     # -------------------------
     #       SCHEMA INIT
     # -------------------------

@@ -1,5 +1,3 @@
-# db/message_repository.py
-
 from __future__ import annotations
 
 from typing import Iterable, List, Optional
@@ -22,6 +20,24 @@ class MessageRepository:
         return get_connection()
 
     # ---------- схема ----------
+    def insert(self, contact_username: str, direction: str, text: str, created_at_utc: str) -> None:
+        """
+        Вставляет одно сообщение в таблицу messages.
+
+        :param contact_username: username собеседника (из Instagram)
+        :param direction: 'in' (входящее) или 'out' (исходящее от нас)
+        :param text: текст сообщения
+        :param created_at_utc: ISO-строка времени создания (UTC)
+        """
+        with get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO messages (contact_username, direction, text, created_at_utc)
+                VALUES (?, ?, ?, ?)
+                """,
+                (contact_username, direction, text, created_at_utc),
+            )
+            conn.commit()
 
     def init_schema(self) -> None:
         """
@@ -31,13 +47,12 @@ class MessageRepository:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS messages (
-                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     contact_username TEXT NOT NULL,
-                    sender           TEXT NOT NULL,
-                    text             TEXT NOT NULL,
-                    timestamp_utc    TEXT NULL,
-                    scraped_at_utc   TEXT NOT NULL
-                )
+                    direction TEXT NOT NULL,        -- 'in' or 'out'
+                    text TEXT NOT NULL,
+                    created_at_utc TEXT NOT NULL
+                );
                 """
             )
             conn.commit()
@@ -47,7 +62,7 @@ class MessageRepository:
         with get_connection() as conn:
             cur = conn.execute(
                 """
-                SELECT contact_username, sender, text, timestamp_utc
+                SELECT id, contact_username, direction, text, created_at_utc
                 FROM messages
                 WHERE contact_username = ?
                 ORDER BY id DESC
@@ -57,6 +72,25 @@ class MessageRepository:
             )
             row = cur.fetchone()
             return row
+
+    def get_last_messages(self, contact_username: str, limit: int) -> List[sqlite3.Row]:
+        """
+        Возвращает последние limit сообщений для указанного контакта,
+        отсортированные от самых новых к более старым.
+        """
+        with get_connection() as conn:
+            cur = conn.execute(
+                """
+                SELECT id, contact_username, direction, text, created_at_utc
+                FROM messages
+                WHERE contact_username = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (contact_username, limit),
+            )
+            rows = cur.fetchall()
+            return rows
 
     def bulk_insert(self, messages: Iterable[MessageSnapshot]) -> int:
         """

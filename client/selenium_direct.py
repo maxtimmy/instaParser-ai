@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -30,6 +30,9 @@ class InstagramDirectClient:
         self._driver = driver
         self._base_url = base_url.rstrip("/")
         self._wait = WebDriverWait(self._driver, wait_timeout)
+        # Кэш последних превью сообщений по username, чтобы не отвечать на старую историю
+        self._last_seen_preview_by_username: Dict[str, str] = {}
+        self._poll_initialized: bool = False
 
     def _load_cookies_if_exist(self, path: str = "cookies.json") -> bool:
         import os, json
@@ -325,7 +328,7 @@ class InstagramDirectClient:
         """
         Открывает диалог в Direct по username.
 
-        Теперь:
+        Логика:
         - сначала пробует найти диалог среди уже прогруженных карточек;
         - если не получилось — находит скроллируемый контейнер списка диалогов,
           скроллит его небольшими шагами вниз и на каждом шаге ищет нужный username;
@@ -398,7 +401,7 @@ class InstagramDirectClient:
         # Маленький шаг скролла, чтобы ничего не перескакивать
         scroll_step = 260
 
-        for i in range(max_scrolls):
+        for _ in range(max_scrolls):
             try:
                 # Пробуем найти нужную карточку на текущем экране
                 try:
@@ -421,7 +424,8 @@ class InstagramDirectClient:
             except StaleElementReferenceException:
                 # Пытаемся восстановить контейнер и продолжить
                 print(
-                    f"[WARN] StaleElementReference при скролле списка диалогов (поиск {username}), пробую восстановиться")
+                    f"[WARN] StaleElementReference при скролле списка диалогов (поиск {username}), пробую восстановиться"
+                )
                 try:
                     threads = self._collect_thread_elements()
                     if not threads:
@@ -454,6 +458,131 @@ class InstagramDirectClient:
                     break
 
         print(f"[WARN] Не удалось найти диалог с пользователем {username} даже после скролла")
+
+    def send_message(self, text: str) -> None:
+        """
+        Отправляет сообщение в текущий открытый чат.
+
+        Стараемся быть устойчивыми к изменениям верстки:
+        - сначала пробуем textarea с placeholder,
+        - затем contenteditable div[role='textbox'].
+        """
+        # Пробуем textarea
+        input_el = None
+        try:
+            input_el = self._wait.until(
+                EC.presence_of_element_located(
+                    (
+                        By.CSS_SELECTOR,
+                        "textarea[placeholder]",
+                    )
+                )
+            )
+        except TimeoutException:
+            input_el = None
+
+        # Фолбэк: contenteditable div
+        if input_el is None:
+            try:
+                input_el = self._wait.until(
+                    EC.presence_of_element_located(
+                        (
+                            By.XPATH,
+                            "//div[@role='textbox' and @contenteditable='true']",
+                        )
+                    )
+                )
+            except TimeoutException:
+                print("[ERROR] Не найдено поле ввода для отправки сообщения")
+                return
+
+        try:
+            input_el.click()
+            input_el.clear()
+        except Exception:
+            # на contenteditable clear может не сработать — просто продолжаем
+            pass
+
+        input_el.send_keys(text)
+        input_el.send_keys(Keys.ENTER)
+
+    def poll_new_messages(self, max_threads: int = 50) -> list[tuple[str, str]]:
+        """
+        Сканырует список диалогов и возвращает новые входящие сообщения
+        в формате [(username, text)].
+
+        Логика:
+        - собираем карточки диалогов;
+        - парсим username и превью;
+        - если у snapshot есть флаг has_unread=True — считаем это новым сообщением;
+        - иначе считаем новым изменение превью по сравнению с последним сохранённым.
+        """
+        thread_elements = self._collect_thread_elements()
+        if max_threads > 0:
+            thread_elements = thread_elements[:max_threads]
+
+        scraped_at = datetime.now(timezone.utc)
+        results: list[tuple[str, str]] = []
+
+        for el in thread_elements:
+            try:
+                outer_html = el.get_attribute("outerHTML")
+            except StaleElementReferenceException:
+                continue
+
+            if not outer_html:
+                continue
+
+            snapshot = self._parse_thread_element(outer_html, scraped_at)
+            if snapshot is None:
+                continue
+
+            username = snapshot.username
+            preview = snapshot.last_message_preview or ""
+
+            if not username:
+                continue
+
+            # отладочный вывод, чтобы видеть, что именно видим в списке диалогов
+            print(
+                f"[POLL] thread username={username!r}, preview={preview!r}, "
+                f"has_unread={getattr(snapshot, 'has_unread', False)!r}"
+            )
+
+            # 1) Если есть явный флаг непрочитанности — реагируем сразу
+            if getattr(snapshot, "has_unread", False):
+                print(f"[POLL] {username!r} has_unread=True → считаем новым сообщением")
+                results.append((username, preview))
+                self._last_seen_preview_by_username[username] = preview
+                continue
+
+            # 2) Иначе работаем через сравнение превью
+            last_seen = self._last_seen_preview_by_username.get(username)
+            print(f"[POLL] state for {username!r}: last_seen={last_seen!r}, current_preview={preview!r}")
+            if last_seen is None:
+                # Первый раз видим этот диалог — просто запоминаем состояние
+                self._last_seen_preview_by_username[username] = preview
+                print(f"[POLL] first time seeing {username!r}, запоминаю preview={preview!r}")
+                continue
+
+            if preview and preview != last_seen:
+                print(f"[POLL] {username!r} считается новым: preview изменился с {last_seen!r} на {preview!r}")
+                self._last_seen_preview_by_username[username] = preview
+                results.append((username, preview))
+
+        # помечаем, что хотя бы один раз уже прошлись по списку
+        self._poll_initialized = True
+        return results
+
+
+    def remember_last_preview(self, username: str, preview: str) -> None:
+        """
+        Явно помечает последнее превью для username.
+        Используется ботом после отправки собственного сообщения,
+        чтобы не реагировать на своё же последнее сообщение.
+        """
+        self._last_seen_preview_by_username[username] = preview
+        self._poll_initialized = True
 
 
     def _find_message_bubbles(self):
@@ -830,25 +959,34 @@ class InstagramDirectClient:
     ) -> Optional[ContactSnapshot]:
         """
         Извлекает данные из HTML одной карточки диалога и превращает их в ContactSnapshot.
-        Если что-то пошло не так — возвращает None.
+        Стараемся быть устойчивыми к изменению верстки:
+        - минимальное требование — наличие username;
+        - превью и время считаем опциональными и ищем несколькими способами;
+        - используем эвристики и fallback-и.
         """
         try:
             soup = BeautifulSoup(outer_html, "html.parser")
 
             # 1) Имя / username
-            name_span = None
-
-            # сначала пробуем найти span[title]
+            # Сначала пробуем классический вариант span[title]
             name_span = soup.select_one("span[title]")
+
+            # Если не нашли, пробуем:
+            # - span с data-testid, связанным с именем
+            # - любой span с текстом
             if name_span is None:
-                # fallback: любой span с текстом внутри карточки
-                span_with_text = None
+                # потенциальные кандидаты
+                candidates = []
+
                 for sp in soup.select("span"):
                     txt = (sp.get_text(strip=True) or "").strip()
-                    if txt:
-                        span_with_text = sp
-                        break
-                name_span = span_with_text
+                    if not txt:
+                        continue
+                    candidates.append(sp)
+
+                # Берём первый осмысленный span как имя
+                if candidates:
+                    name_span = candidates[0]
 
             # если вообще не нашли имя — пропускаем карточку
             if name_span is None:
@@ -862,30 +1000,92 @@ class InstagramDirectClient:
             if not username:
                 return None
 
-            full_name: Optional[str] = None  # пока не вытаскиваем отдельно
+            full_name: Optional[str] = None
 
-            # 2) Превью последнего сообщения
+            # Пытаемся найти full_name как второй span с текстом,
+            # отличным от username.
+            all_spans = soup.select("span")
+            for sp in all_spans:
+                txt = (sp.get_text(strip=True) or "").strip()
+                if not txt:
+                    continue
+                if txt != username:
+                    full_name = txt
+                    break
+
+            # 2) Превью последнего сообщения — по возможности
             preview_text: Optional[str] = None
-            for sp in soup.select("span"):
+
+            # Сначала пробуем span без title, не совпадающий с username/full_name
+            for sp in all_spans:
+                if sp is name_span:
+                    continue
                 if sp.has_attr("title"):
                     continue
                 txt = (sp.get_text(strip=True) or "").strip()
-                if txt:
+                if not txt:
+                    continue
+                if txt in (username, full_name):
+                    continue
+                preview_text = txt
+                break
+
+            # Fallback: div[dir='auto'] с текстом
+            if not preview_text:
+                for div in soup.select("div[dir='auto']"):
+                    txt = (div.get_text(strip=True) or "").strip()
+                    if not txt:
+                        continue
+                    if txt in (username, full_name):
+                        continue
                     preview_text = txt
                     break
 
-            # 👉 фильтр: если нет превью — не считаем это диалогом
-            if not preview_text:
-                return None
+            # 3) Время последнего сообщения (опционально)
+            last_message_at_utc: Optional[datetime] = None
 
-            # 3) Строка времени (abbr[aria-label])
+            # 3) Время последнего сообщения (опционально)
+            last_message_at_utc: Optional[datetime] = None
+
+            # Пробуем abbr[aria-label] как в исходной версии
+            time_str = None
             abbr = soup.select_one("abbr[aria-label]")
-            if abbr is None:
-                # 👉 нет времени → это не карточка чата (скорее всего шапка или заметка)
-                return None
+            if abbr is not None:
+                time_str = (abbr.get("aria-label") or "").strip()
 
-            time_str = (abbr.get("aria-label") or "").strip()
-            # пока time_str никак не парсим в datetime, оставляем last_message_at_utc=None
+            # Альтернатива: тег time с datetime
+            if not time_str:
+                time_tag = soup.select_one("time[datetime]")
+                if time_tag is not None:
+                    time_str = (time_tag.get("datetime") or "").strip()
+
+            # 4) Признак непрочитанного сообщения (синяя точка и т.п.)
+            has_unread = False
+
+            # Кандидаты на индикатор непрочитанности
+            unread_candidates = []
+
+            # 4.1. aria-label (EN/RU)
+            unread_candidates.extend(soup.select("span[aria-label*='Unread']"))
+            unread_candidates.extend(soup.select("span[aria-label*='Не прочитано']"))
+
+            # 4.2. Текстовые индикаторы внутри div/span, как в фрагменте:
+            # <div ...>Unread</div>
+            for tag in soup.select("div, span"):
+                txt = (tag.get_text(strip=True) or "").strip().lower()
+                if not txt:
+                    continue
+                if "unread" in txt or "не прочитано" in txt or "непрочитано" in txt:
+                    unread_candidates.append(tag)
+
+            # 4.3. Дополнительная эвристика: div'ы с inline-стилями, где в описании встречается 'dot'/'bullet'
+            for div in soup.select("div"):
+                style = (div.get("style") or "").lower()
+                if "dot" in style or "bullet" in style:
+                    unread_candidates.append(div)
+
+            if unread_candidates:
+                has_unread = True
 
             snapshot = ContactSnapshot(
                 username=username,
@@ -893,10 +1093,19 @@ class InstagramDirectClient:
                 profile_url=None,
                 is_active=True,
                 last_message_preview=preview_text,
-                last_message_at_utc=None,
+                last_message_at_utc=last_message_at_utc,
                 scraped_at_utc=scraped_at_utc,
             )
+
+            # сохраняем признак непрочитанности, если он есть в разметке
+            snapshot.has_unread = has_unread
             return snapshot
         except Exception as e:
             print("[ERROR] Не удалось распарсить карточку из HTML:", repr(e))
             return None
+    def open_direct(self) -> None:
+        """
+        Публичный метод для открытия Direct.
+        Обёртка над _open_direct(), чтобы снаружи не дергать приватный метод.
+        """
+        self._open_direct()

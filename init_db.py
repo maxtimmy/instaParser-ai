@@ -1,23 +1,17 @@
-# init_db.py
-from __future__ import annotations
-
 from db.contact_repository import ContactRepository
 from db.message_repository import MessageRepository
+from db.contact_memory_repository import ContactMemoryRepository
 
 
-def main():
-    print("[INIT] Initializing database...")
+def init_db() -> None:
+    contact_repo = ContactRepository()
+    message_repo = MessageRepository()
+    memory_repo = ContactMemoryRepository()
 
-    msg_repo = MessageRepository()
-    msg_repo.init_schema()
-    print("[INIT] messages table created/verified.")
-
-    contacts_repo = ContactRepository()
-    contacts_repo.init_schema()
-    print("[INIT] contacts table created/verified.")
-
-    print("[INIT] Done.")
+    contact_repo.init_schema()
+    message_repo.init_schema()
+    memory_repo.init_schema()
 
 
 if __name__ == "__main__":
-    main()
+    init_db()

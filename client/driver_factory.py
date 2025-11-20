@@ -1,10 +1,10 @@
-# client/driver_factory.py
 
 from selenium import webdriver
+from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.chrome.options import Options
 
 
-def create_driver(headless: bool = False):
+def create_driver(headless: bool = False) -> WebDriver:
     """
     Создаёт и конфигурирует Chrome WebDriver.
     :param headless: запуск без окна браузера.
